@@ -280,9 +280,9 @@ class CampusNavigationApp:
     """校园导航系统主窗口。"""
 
     # 节点样式
-    NODE_W = 96          # 圆角矩形宽度
-    NODE_H = 40          # 圆角矩形高度
-    NODE_R = 12          # 圆角半径
+    NODE_W = 116          # 圆角矩形宽度（适配长中文名）
+    NODE_H = 44          # 圆角矩形高度
+    NODE_R = 14          # 圆角半径
     NODE_COLOR = "#4F6EF7"       # 靛蓝
     NODE_HIGHLIGHT = "#FF6B6B"   # 珊瑚红
     NODE_SHADOW = "#D1D5DB"      # 阴影
@@ -303,15 +303,15 @@ class CampusNavigationApp:
     def __init__(self, root: tk.Tk, map_file: str):
         self.root = root
         self.root.title("校园导航系统")
-        self.root.geometry("1020x660")
-        self.root.minsize(760, 500)
+        self.root.geometry("1280x760")
+        self.root.minsize(960, 580)
         self.root.configure(bg="#FFFFFF")
 
         self.campus = CampusMap()
         self.current_path: list[str] | None = None
         self.current_mode = 0
-        self._ref_cw = 640   # 参考画布宽度（坐标基于此）
-        self._ref_ch = 580   # 参考画布高度
+        self._ref_cw = 900   # 参考画布宽度（坐标基于此）
+        self._ref_ch = 650   # 参考画布高度
 
         # 主布局
         self.main_frame = ttk.Frame(root)
@@ -528,9 +528,9 @@ class CampusNavigationApp:
                     fill=color, outline="", tags="node")
 
         # 编号徽章
-        badge_r = 9
-        badge_x = x - w // 2 + 12
-        badge_y = y - h // 2 + 12
+        badge_r = 10
+        badge_x = x - w // 2 + 14
+        badge_y = y - h // 2 + 14
         self.canvas.create_oval(
             badge_x - badge_r, badge_y - badge_r,
             badge_x + badge_r, badge_y + badge_r,
@@ -538,7 +538,7 @@ class CampusNavigationApp:
         )
         self.canvas.create_text(
             badge_x, badge_y, text=str(idx + 1),
-            fill=color, font=("Segoe UI", 7, "bold"), tags="node"
+            fill=color, font=("Segoe UI", 8, "bold"), tags="node"
         )
 
         # 地点名称
