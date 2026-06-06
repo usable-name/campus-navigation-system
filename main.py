@@ -309,15 +309,15 @@ class CampusNavigationApp:
     NODE_H = 42          # 圆角矩形高度
     NODE_R = 14          # 圆角半径
     NODE_COLOR = "#4F6EF7"       # 靛蓝
-    NODE_HIGHLIGHT = "#FF6B6B"   # 珊瑚红（路径）
+    NODE_HIGHLIGHT = "#FF6B6B"   # 珊瑚红（路径节点）
     NODE_SELECTED = "#10B981"    # 翠绿（选中起点/终点）
     NODE_SHADOW = "#D1D5DB"      # 阴影
 
     # 边样式
     EDGE_COLOR = "#CBD5E1"
-    EDGE_HIGHLIGHT = "#F59E0B"   # 琥珀
+    EDGE_HIGHLIGHT = "#FFD700"   # 金色
     EDGE_WIDTH = 2
-    EDGE_HIGHLIGHT_WIDTH = 4
+    EDGE_HIGHLIGHT_WIDTH = 5
 
     # 画布
     CANVAS_BG = "#F8F9FB"
@@ -341,6 +341,9 @@ class CampusNavigationApp:
         self._select_start: int | None = None  # 点击选中的起点
         self._select_end: int | None = None    # 点击选中的终点
         self._broken_nodes: set[int] = set()   # 不可达节点（红色标记）
+        self._hover_node: int | None = None    # 悬停节点索引
+        self._tooltip: tk.Toplevel | None = None  # 悬停提示窗
+        self._details_visible = False           # 算法详情折叠状态
 
         # 主布局
         self.main_frame = ttk.Frame(root)
@@ -354,6 +357,8 @@ class CampusNavigationApp:
         self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 12))
         self.canvas.bind("<Configure>", self._on_canvas_resize)
         self.canvas.bind("<Button-1>", self._on_canvas_click)
+        self.canvas.bind("<Motion>", self._on_canvas_motion)
+        self.canvas.bind("<Leave>", self._on_canvas_leave)
 
         # 右侧 — 控制面板
         self.panel = tk.Frame(self.main_frame, bg="#FFFFFF", width=280)
@@ -372,7 +377,22 @@ class CampusNavigationApp:
         title.pack(pady=(16, 4), anchor=tk.W, padx=16)
         subtitle = tk.Label(self.panel, text="Campus Navigation System",
                             font=("Segoe UI", 9), fg="#94A3B8", bg="#FFFFFF")
-        subtitle.pack(pady=(0, 16), anchor=tk.W, padx=16)
+        subtitle.pack(pady=(0, 12), anchor=tk.W, padx=16)
+
+        # 节点搜索
+        self.search_var = tk.StringVar()
+        self.search_var.trace("w", lambda *a: self._on_node_search())
+        search_frame = tk.Frame(self.panel, bg="#FFFFFF")
+        search_frame.pack(fill=tk.X, padx=16, pady=(0, 12))
+        tk.Label(search_frame, text="🔍", font=("Segoe UI", 10), bg="#FFFFFF",
+                 fg="#94A3B8").pack(side=tk.LEFT)
+        self.search_entry = tk.Entry(
+            search_frame, textvariable=self.search_var,
+            font=("Microsoft YaHei", 9), fg="#334155", bg="#F1F5F9",
+            relief=tk.FLAT, borderwidth=0, insertbackground="#4F6EF7"
+        )
+        self.search_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(4, 0), ipady=3)
+        self._search_highlight: set[int] = set()
 
         # 分隔线
         sep = tk.Frame(self.panel, height=1, bg="#E5E7EB")
@@ -568,9 +588,9 @@ class CampusNavigationApp:
     def _on_canvas_click(self, event):
         """点击画布选起点/终点。"""
         scaled = self._get_scaled_coords()
-        # 查找被点击的节点
+        # 查找被点击的节点（热区 2 倍）
         for i, (x, y) in enumerate(scaled):
-            hw, hh = self.NODE_W // 2, self.NODE_H // 2
+            hw, hh = self.NODE_W, self.NODE_H  # 2x 热区
             if x - hw <= event.x <= x + hw and y - hh <= event.y <= y + hh:
                 if self._select_start is None:
                     self._select_start = i
@@ -601,6 +621,53 @@ class CampusNavigationApp:
         self.current_path = None
         self._draw_map()
         self._set_result("")
+
+    def _on_canvas_motion(self, event):
+        """鼠标移动：悬停检测 + Tooltip。"""
+        scaled = self._get_scaled_coords()
+        found = None
+        for i, (x, y) in enumerate(scaled):
+            hw, hh = self.NODE_W // 2 + 6, self.NODE_H // 2 + 6
+            if x - hw <= event.x <= x + hw and y - hh <= event.y <= y + hh:
+                found = i
+                break
+        if found != self._hover_node:
+            self._hover_node = found
+            self._hide_tooltip()
+            if found is not None and found in self._broken_nodes:
+                self._show_tooltip(event, found)
+
+    def _on_canvas_leave(self, event):
+        self._hover_node = None
+        self._hide_tooltip()
+
+    def _show_tooltip(self, event, idx: int):
+        if self._tooltip:
+            return
+        self._tooltip = tk.Toplevel(self.root)
+        self._tooltip.wm_overrideredirect(True)
+        self._tooltip.wm_geometry(f"+{event.x_root + 14}+{event.y_root + 10}")
+        tip_frame = tk.Frame(self._tooltip, bg="#1E293B", padx=10, pady=6)
+        tip_frame.pack()
+        tk.Label(tip_frame, text="⚠️ 未连接主干道", fg="#FCA5A5",
+                 bg="#1E293B", font=("Microsoft YaHei", 9, "bold")).pack()
+        tk.Label(tip_frame, text="该节点不在道路网络中", fg="#CBD5E1",
+                 bg="#1E293B", font=("Microsoft YaHei", 8)).pack()
+
+    def _hide_tooltip(self):
+        if self._tooltip:
+            self._tooltip.destroy()
+            self._tooltip = None
+
+    def _on_node_search(self):
+        """节点搜索：高亮匹配节点。"""
+        q = self.search_var.get().strip().lower()
+        self._search_highlight = set()
+        if q:
+            for i, name in enumerate(self.campus.nodes):
+                if q in name.lower():
+                    self._search_highlight.add(i)
+        self._draw_map()
 
     def _on_combo_changed(self, event=None):
         """下拉框选择改变时同步状态。"""
@@ -641,17 +708,44 @@ class CampusNavigationApp:
         for i, name in enumerate(self.campus.nodes):
             is_sel = i in (self._select_start, self._select_end)
             is_broken = i in self._broken_nodes and self._select_start is not None
-            self._draw_node(i, name, scaled, highlight=False, selected=is_sel, broken=is_broken)
+            is_search = i in self._search_highlight
+            self._draw_node(i, name, scaled, highlight=False, selected=is_sel,
+                           broken=is_broken, search_hl=is_search)
 
         if self.current_path:
             self._highlight_path(scaled)
 
     def _draw_node(self, idx: int, name: str, scaled: list[tuple[int, int]],
-                   highlight: bool, selected: bool = False, broken: bool = False):
-        """绘制高分辨率圆角矩形节点（双层阴影 + 内高光 + 编号徽章 + 断点标记）。"""
+                   highlight: bool, selected: bool = False, broken: bool = False,
+                   search_hl: bool = False):
+        """绘制高分辨率节点（双层阴影 + 内高光 + 搜索高亮 + 起终点光晕）。"""
         x, y = scaled[idx]
         w, h = self.NODE_W, self.NODE_H
         r = self.NODE_R
+
+        # === 搜索高亮光环 ===
+        if search_hl:
+            self.canvas.create_oval(
+                x - w // 2 - 6, y - h // 2 - 6,
+                x + w // 2 + 6, y + h // 2 + 6,
+                outline="#FBBF24", width=3, tags="node", dash=(4, 2)
+            )
+
+        # === 起/终点光晕 ===
+        is_start = (idx == self._select_start)
+        is_end = (idx == self._select_end)
+        if is_start and not highlight:
+            self.canvas.create_oval(
+                x - w // 2 - 6, y - h // 2 - 6,
+                x + w // 2 + 6, y + h // 2 + 6,
+                outline="#10B981", width=3, tags="node"
+            )
+        if is_end and not highlight:
+            self.canvas.create_oval(
+                x - w // 2 - 6, y - h // 2 - 6,
+                x + w // 2 + 6, y + h // 2 + 6,
+                outline="#EF4444", width=3, tags="node"
+            )
 
         # === 双层阴影（模拟柔和阴影） ===
         _round_rect(self.canvas, x - w // 2 + 3, y - h // 2 + 3,
@@ -822,11 +916,12 @@ class CampusNavigationApp:
                 self._set_result(err, is_error=True)
                 return
             route_str = " → ".join(full_path)
+            speed = 80 if mode == 0 else 200
+            estimated_min = max(1, round(total_dist / speed))
             self._set_result(
-                f"【途经点模式 — Dijkstra】\n"
-                f"最短路径:\n{route_str}\n\n"
-                f"总距离: {total_dist} ({mode_label})\n"
-                f"途经: {waypoint}"
+                f"【{total_dist} 米 | 约 {estimated_min} 分钟】\n"
+                f"{route_str}\n\n"
+                f"途经: {waypoint}  ({mode_label})"
             )
             return
 
@@ -857,11 +952,13 @@ class CampusNavigationApp:
         self._draw_map()
 
         route_str = " → ".join(d_path)
+        # 估算时间
+        speed = 80 if mode == 0 else 200  # 米/分钟
+        estimated_min = max(1, round(d_dist / speed))
         self._set_result(
-            f"【{mode_label}模式 — 算法对比】\n"
-            f"最短路径:\n{route_str}\n\n"
-            f"总距离: {d_dist}\n\n"
-            f"━━ 性能对比 ━━\n"
+            f"【{d_dist} 米 | 约 {estimated_min} 分钟】\n"
+            f"{route_str}\n\n"
+            f"━━ 算法性能 ━━\n"
             f"  Dijkstra 探索节点: {d_explored}\n"
             f"  A*       探索节点: {a_explored}\n"
             f"  (结果一致: {'是' if d_dist == a_dist else '否'})"
