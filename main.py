@@ -263,17 +263,42 @@ def route_with_waypoint(campus: CampusMap, start: str, waypoint: str, end: str,
 # ============================================================
 
 def _round_rect(canvas: tk.Canvas, x1: int, y1: int, x2: int, y2: int,
-                r: int, **kwargs) -> int:
-    """绘制圆角矩形，返回 item ID。"""
-    points = [
-        x1 + r, y1, x2 - r, y1,
-        x2, y1, x2, y1 + r,
-        x2, y2 - r, x2, y2,
-        x2 - r, y2, x1 + r, y2,
-        x1, y2, x1, y2 - r,
-        x1, y1 + r, x1, y1,
-    ]
-    return canvas.create_polygon(points, smooth=True, **kwargs)
+                r: int, fill: str = "", outline: str = "", width: int = 0,
+                **kwargs) -> int:
+    """使用精确 PWQ 圆弧绘制圆角矩形（填充+描边）。返回最后一个 item ID。"""
+    items = []
+    # 填充：四角扇区 + 中央矩形 + 上下带状矩形
+    if fill:
+        for cx, cy, start in [(x1 + r, y1 + r, 90), (x2 - r, y1 + r, 0),
+                               (x2 - r, y2 - r, 270), (x1 + r, y2 - r, 180)]:
+            items.append(canvas.create_arc(cx - r, cy - r, cx + r, cy + r,
+                                           start=start, extent=90,
+                                           style=tk.PIESLICE, fill=fill,
+                                           outline=fill, width=0, **kwargs))
+        items.append(canvas.create_rectangle(x1 + r, y1, x2 - r, y2,
+                                              fill=fill, outline=fill,
+                                              width=0, **kwargs))
+        items.append(canvas.create_rectangle(x1, y1 + r, x2, y2 - r,
+                                              fill=fill, outline=fill,
+                                              width=0, **kwargs))
+    # 描边：四角弧线 + 四条直线
+    if outline and width:
+        w = width
+        for cx, cy, start in [(x1 + r, y1 + r, 90), (x2 - r, y1 + r, 0),
+                               (x2 - r, y2 - r, 270), (x1 + r, y2 - r, 180)]:
+            items.append(canvas.create_arc(cx - r, cy - r, cx + r, cy + r,
+                                           start=start, extent=90,
+                                           style=tk.ARC, outline=outline,
+                                           width=w, **kwargs))
+        items.append(canvas.create_line(x1 + r, y1, x2 - r, y1,
+                                         fill=outline, width=w, **kwargs))
+        items.append(canvas.create_line(x1 + r, y2, x2 - r, y2,
+                                         fill=outline, width=w, **kwargs))
+        items.append(canvas.create_line(x1, y1 + r, x1, y2 - r,
+                                         fill=outline, width=w, **kwargs))
+        items.append(canvas.create_line(x2, y1 + r, x2, y2 - r,
+                                         fill=outline, width=w, **kwargs))
+    return items[-1] if items else 0
 
 
 class CampusNavigationApp:
@@ -623,53 +648,64 @@ class CampusNavigationApp:
 
     def _draw_node(self, idx: int, name: str, scaled: list[tuple[int, int]],
                    highlight: bool, selected: bool = False, broken: bool = False):
-        """绘制圆角矩形节点（含阴影 + 编号徽章 + 选中光环 + 断点标记）。"""
+        """绘制高分辨率圆角矩形节点（双层阴影 + 内高光 + 编号徽章 + 断点标记）。"""
         x, y = scaled[idx]
         w, h = self.NODE_W, self.NODE_H
         r = self.NODE_R
 
-        # 阴影
-        _round_rect(self.canvas, x - w // 2 + 2, y - h // 2 + 2,
-                    x + w // 2 + 2, y + h // 2 + 2, r,
-                    fill=self.NODE_SHADOW, outline="", tags="node")
+        # === 双层阴影（模拟柔和阴影） ===
+        _round_rect(self.canvas, x - w // 2 + 3, y - h // 2 + 3,
+                    x + w // 2 + 3, y + h // 2 + 3, r,
+                    fill="#CBD5E1", outline="", tags="node")
+        _round_rect(self.canvas, x - w // 2 + 1, y - h // 2 + 1,
+                    x + w // 2 + 1, y + h // 2 + 1, r,
+                    fill="#E2E8F0", outline="", tags="node")
 
-        # 主体
+        # === 主体颜色 ===
         if broken:
-            color = "#FEE2E2"  # 浅红底
+            base_color = "#FEE2E2"
             text_color = "#991B1B"
         elif highlight:
-            color = self.NODE_HIGHLIGHT
+            base_color = self.NODE_HIGHLIGHT
             text_color = "#FFFFFF"
         elif selected:
-            color = self.NODE_SELECTED
+            base_color = self.NODE_SELECTED
             text_color = "#FFFFFF"
         else:
-            color = self.NODE_COLOR
+            base_color = self.NODE_COLOR
             text_color = "#FFFFFF"
 
         _round_rect(self.canvas, x - w // 2, y - h // 2,
                     x + w // 2, y + h // 2, r,
-                    fill=color, outline="", tags="node")
+                    fill=base_color, outline="", tags="node")
 
-        # 断点红色边框
+        # === 内高光（顶部 1/3 区域加亮，模拟 3D 凸起） ===
+        if not broken:
+            rh = int(base_color[1:3], 16); gh = int(base_color[3:5], 16); bh = int(base_color[5:7], 16)
+            hl_color = f"#{min(255, rh + 40):02x}{min(255, gh + 40):02x}{min(255, bh + 40):02x}"
+            _round_rect(self.canvas, x - w // 2 + 2, y - h // 2 + 1,
+                        x + w // 2 - 2, y - h // 2 + h // 3, r - 2,
+                        fill=hl_color, outline="", tags="node")
+
+        # === 断点红色边框 + 感叹号 ===
         if broken:
             _round_rect(self.canvas, x - w // 2, y - h // 2,
                         x + w // 2, y + h // 2, r,
                         fill="", outline="#EF4444", width=2, tags="node")
-            # 感叹号图标
+            ex_r = 9
+            ex_x = x + w // 2 - 10
+            ex_y = y - h // 2
             self.canvas.create_oval(
-                x + w // 2 - 12, y - h // 2 - 4,
-                x + w // 2 + 4, y - h // 2 + 12,
-                fill="#EF4444", outline="", tags="node"
+                ex_x - ex_r, ex_y - ex_r,
+                ex_x + ex_r, ex_y + ex_r,
+                fill="#EF4444", outline="#FFFFFF", width=2, tags="node"
             )
             self.canvas.create_text(
-                x + w // 2 - 4, y - h // 2 + 4,
-                text="!", fill="#FFFFFF",
-                font=("Segoe UI", 8, "bold"), tags="node"
+                ex_x, ex_y, text="!", fill="#FFFFFF",
+                font=("Segoe UI", 10, "bold"), tags="node"
             )
-            badge_fill = "#EF4444"
 
-        # 选中光环
+        # === 选中光环 ===
         if selected:
             self.canvas.create_oval(
                 x - w // 2 - 4, y - h // 2 - 4,
@@ -677,23 +713,24 @@ class CampusNavigationApp:
                 outline="#10B981", width=3, tags="node"
             )
 
-        # 编号徽章
+        # === 编号徽章 ===
         badge_r = 10
-        badge_x = x - w // 2 + 14
-        badge_y = y - h // 2 + 14
+        badge_x = x - w // 2 + 15
+        badge_y = y - h // 2 + 15
         badge_fill = "#EF4444" if broken else "#FFFFFF"
-        badge_text_color = "#FFFFFF" if broken else color
+        badge_text_color = "#FFFFFF" if broken else base_color
         self.canvas.create_oval(
             badge_x - badge_r, badge_y - badge_r,
             badge_x + badge_r, badge_y + badge_r,
-            fill=badge_fill, outline="", tags="node"
+            fill=badge_fill, outline="#E5E7EB" if not broken else "",
+            width=1 if not broken else 0, tags="node"
         )
         self.canvas.create_text(
             badge_x, badge_y, text=str(idx + 1),
             fill=badge_text_color, font=("Segoe UI", 8, "bold"), tags="node"
         )
 
-        # 地点名称
+        # === 地点名称 ===
         self.canvas.create_text(
             x, y, text=name, fill=text_color,
             font=("Microsoft YaHei", 10, "bold"), tags="node"
@@ -716,12 +753,12 @@ class CampusNavigationApp:
             active_w = w_walk if self.current_mode == 0 else w_bike
             label = f"{active_w}分"
         mx, my = (x1 + x2) // 2, (y1 + y2) // 2
-        # 胶囊背景
-        pad_x, pad_y = 16, 10
-        self.canvas.create_oval(
-            mx - pad_x, my - pad_y, mx + pad_x, my + pad_y,
-            fill="#FFFFFF", outline="#E5E7EB", tags="edge"
-        )
+        # 胶囊背景（精确圆角矩形）
+        pad_x, pad_y = 16, 11
+        cap_r = 11
+        _round_rect(self.canvas, mx - pad_x, my - pad_y,
+                    mx + pad_x, my + pad_y, cap_r,
+                    fill="#FFFFFF", outline="#E5E7EB", width=1, tags="edge")
         self.canvas.create_text(
             mx, my, text=label,
             fill="#FF6B00", font=("Segoe UI", 11, "bold"), tags="edge"
