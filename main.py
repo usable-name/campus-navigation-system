@@ -261,42 +261,73 @@ def route_with_waypoint(campus: CampusMap, start: str, waypoint: str, end: str,
 # ============================================================
 # 3. Tkinter 图形界面
 # ============================================================
+
+def _round_rect(canvas: tk.Canvas, x1: int, y1: int, x2: int, y2: int,
+                r: int, **kwargs) -> int:
+    """绘制圆角矩形，返回 item ID。"""
+    points = [
+        x1 + r, y1, x2 - r, y1,
+        x2, y1, x2, y1 + r,
+        x2, y2 - r, x2, y2,
+        x2 - r, y2, x1 + r, y2,
+        x1, y2, x1, y2 - r,
+        x1, y1 + r, x1, y1,
+    ]
+    return canvas.create_polygon(points, smooth=True, **kwargs)
+
+
 class CampusNavigationApp:
     """校园导航系统主窗口。"""
 
-    NODE_RADIUS = 28
-    NODE_COLOR = "#4A90D9"
-    NODE_HIGHLIGHT = "#E74C3C"
-    EDGE_COLOR = "#95A5A6"
-    EDGE_HIGHLIGHT = "#E74C3C"
+    # 节点样式
+    NODE_W = 96          # 圆角矩形宽度
+    NODE_H = 40          # 圆角矩形高度
+    NODE_R = 12          # 圆角半径
+    NODE_COLOR = "#4F6EF7"       # 靛蓝
+    NODE_HIGHLIGHT = "#FF6B6B"   # 珊瑚红
+    NODE_SHADOW = "#D1D5DB"      # 阴影
+
+    # 边样式
+    EDGE_COLOR = "#CBD5E1"
+    EDGE_HIGHLIGHT = "#F59E0B"   # 琥珀
     EDGE_WIDTH = 2
     EDGE_HIGHLIGHT_WIDTH = 4
+
+    # 画布
+    CANVAS_BG = "#F8F9FB"
+    CANVAS_MIN_W = 400
+    CANVAS_MIN_H = 350
 
     MODE_LABELS = ["步行", "自行车"]
 
     def __init__(self, root: tk.Tk, map_file: str):
         self.root = root
         self.root.title("校园导航系统")
-        self.root.geometry("960x620")
-        self.root.resizable(False, False)
+        self.root.geometry("1020x660")
+        self.root.minsize(760, 500)
+        self.root.configure(bg="#FFFFFF")
 
         self.campus = CampusMap()
         self.current_path: list[str] | None = None
-        self.current_mode = 0  # 0=步行, 1=自行车
+        self.current_mode = 0
+        self._ref_cw = 640   # 参考画布宽度（坐标基于此）
+        self._ref_ch = 580   # 参考画布高度
 
-        self.main_frame = ttk.Frame(root, padding=10)
-        self.main_frame.pack(fill=tk.BOTH, expand=True)
+        # 主布局
+        self.main_frame = ttk.Frame(root)
+        self.main_frame.pack(fill=tk.BOTH, expand=True, padx=12, pady=12)
 
-        # 左侧 — 地图画布
+        # 左侧 — 地图画布（自适应）
         self.canvas = tk.Canvas(
-            self.main_frame, width=640, height=580,
-            bg="#F5F6FA", highlightthickness=0
+            self.main_frame, bg=self.CANVAS_BG,
+            highlightthickness=1, highlightbackground="#E5E7EB"
         )
-        self.canvas.pack(side=tk.LEFT, padx=(0, 10))
+        self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 12))
+        self.canvas.bind("<Configure>", self._on_canvas_resize)
 
-        # 右侧 — 控制面板（加宽以适应新控件）
-        self.panel = ttk.Frame(self.main_frame, width=280)
-        self.panel.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+        # 右侧 — 控制面板
+        self.panel = tk.Frame(self.main_frame, bg="#FFFFFF", width=280)
+        self.panel.pack(side=tk.RIGHT, fill=tk.Y)
         self.panel.pack_propagate(False)
 
         self._build_panel()
@@ -304,76 +335,97 @@ class CampusNavigationApp:
 
     # ---------- 控制面板 ----------
     def _build_panel(self):
-        ttk.Label(self.panel, text="校园导航系统",
-                  font=("Microsoft YaHei", 15, "bold")).pack(pady=(0, 12))
+        """构建右侧控制面板（现代扁平风格）。"""
+        # 标题
+        title = tk.Label(self.panel, text="校园导航", font=("Microsoft YaHei", 18, "bold"),
+                         fg="#1E293B", bg="#FFFFFF")
+        title.pack(pady=(16, 4), anchor=tk.W, padx=16)
+        subtitle = tk.Label(self.panel, text="Campus Navigation System",
+                            font=("Segoe UI", 9), fg="#94A3B8", bg="#FFFFFF")
+        subtitle.pack(pady=(0, 16), anchor=tk.W, padx=16)
+
+        # 分隔线
+        sep = tk.Frame(self.panel, height=1, bg="#E5E7EB")
+        sep.pack(fill=tk.X, padx=16)
 
         # 交通模式
-        ttk.Label(self.panel, text="交通模式:", font=("Microsoft YaHei", 10)).pack(anchor=tk.W)
-        mode_frame = ttk.Frame(self.panel)
-        mode_frame.pack(fill=tk.X, pady=(2, 10))
+        tk.Label(self.panel, text="交通模式", font=("Microsoft YaHei", 9, "bold"),
+                 fg="#64748B", bg="#FFFFFF").pack(anchor=tk.W, padx=16, pady=(12, 2))
+        mode_frame = tk.Frame(self.panel, bg="#FFFFFF")
+        mode_frame.pack(fill=tk.X, padx=16, pady=(0, 12))
         self.mode_var = tk.IntVar(value=0)
         for i, label in enumerate(self.MODE_LABELS):
-            ttk.Radiobutton(
+            tk.Radiobutton(
                 mode_frame, text=label, variable=self.mode_var, value=i,
-                command=self._on_mode_changed
-            ).pack(side=tk.LEFT, padx=(0, 12))
+                command=self._on_mode_changed,
+                font=("Microsoft YaHei", 10), fg="#334155", bg="#FFFFFF",
+                activebackground="#FFFFFF", activeforeground="#4F6EF7",
+                selectcolor="#FFFFFF", indicatoron=True
+            ).pack(side=tk.LEFT, padx=(0, 16))
 
         # 起点
-        ttk.Label(self.panel, text="起点:", font=("Microsoft YaHei", 10)).pack(anchor=tk.W)
+        tk.Label(self.panel, text="起点", font=("Microsoft YaHei", 9, "bold"),
+                 fg="#64748B", bg="#FFFFFF").pack(anchor=tk.W, padx=16, pady=(0, 2))
         self.start_var = tk.StringVar()
         self.start_combo = ttk.Combobox(
-            self.panel, textvariable=self.start_var,
-            state="readonly", font=("Microsoft YaHei", 10)
+            self.panel, textvariable=self.start_var, state="readonly",
+            font=("Microsoft YaHei", 10)
         )
-        self.start_combo.pack(fill=tk.X, pady=(2, 8))
+        self.start_combo.pack(fill=tk.X, padx=16, pady=(0, 10))
 
         # 途经点
-        ttk.Label(self.panel, text="途经点 (可选):", font=("Microsoft YaHei", 10)).pack(anchor=tk.W)
+        tk.Label(self.panel, text="途经点（可选）", font=("Microsoft YaHei", 9, "bold"),
+                 fg="#64748B", bg="#FFFFFF").pack(anchor=tk.W, padx=16, pady=(0, 2))
         self.waypoint_var = tk.StringVar(value="无")
         self.waypoint_combo = ttk.Combobox(
-            self.panel, textvariable=self.waypoint_var,
-            state="readonly", font=("Microsoft YaHei", 10)
+            self.panel, textvariable=self.waypoint_var, state="readonly",
+            font=("Microsoft YaHei", 10)
         )
-        self.waypoint_combo.pack(fill=tk.X, pady=(2, 8))
+        self.waypoint_combo.pack(fill=tk.X, padx=16, pady=(0, 10))
 
         # 终点
-        ttk.Label(self.panel, text="终点:", font=("Microsoft YaHei", 10)).pack(anchor=tk.W)
+        tk.Label(self.panel, text="终点", font=("Microsoft YaHei", 9, "bold"),
+                 fg="#64748B", bg="#FFFFFF").pack(anchor=tk.W, padx=16, pady=(0, 2))
         self.end_var = tk.StringVar()
         self.end_combo = ttk.Combobox(
-            self.panel, textvariable=self.end_var,
-            state="readonly", font=("Microsoft YaHei", 10)
+            self.panel, textvariable=self.end_var, state="readonly",
+            font=("Microsoft YaHei", 10)
         )
-        self.end_combo.pack(fill=tk.X, pady=(2, 10))
+        self.end_combo.pack(fill=tk.X, padx=16, pady=(0, 14))
 
-        # 查询按钮
-        self.search_btn = ttk.Button(
-            self.panel, text="查询最短路径", command=self._on_search
+        # 按钮组
+        btn_frame = tk.Frame(self.panel, bg="#FFFFFF")
+        btn_frame.pack(fill=tk.X, padx=16, pady=(0, 12))
+        self.search_btn = tk.Button(
+            btn_frame, text="查询最短路径", command=self._on_search,
+            font=("Microsoft YaHei", 10, "bold"), fg="#FFFFFF", bg="#4F6EF7",
+            activebackground="#3B5DE7", activeforeground="#FFFFFF",
+            relief=tk.FLAT, cursor="hand2", padx=12, pady=6, borderwidth=0
         )
         self.search_btn.pack(fill=tk.X, pady=(0, 6))
-
-        # 查看所有地点
-        self.list_btn = ttk.Button(
-            self.panel, text="查看所有地点", command=self._on_list_places
+        self.list_btn = tk.Button(
+            btn_frame, text="查看所有地点", command=self._on_list_places,
+            font=("Microsoft YaHei", 9), fg="#4F6EF7", bg="#EFF1FF",
+            activebackground="#DEE2FF", activeforeground="#4F6EF7",
+            relief=tk.FLAT, cursor="hand2", padx=12, pady=4, borderwidth=0
         )
-        self.list_btn.pack(fill=tk.X, pady=(0, 12))
+        self.list_btn.pack(fill=tk.X)
+
+        # 分隔线
+        sep2 = tk.Frame(self.panel, height=1, bg="#E5E7EB")
+        sep2.pack(fill=tk.X, padx=16, pady=(0, 12))
 
         # 结果展示
-        ttk.Label(self.panel, text="查询结果:", font=("Microsoft YaHei", 10, "bold")).pack(anchor=tk.W)
-        self.result_frame = ttk.Frame(self.panel)
-        self.result_frame.pack(fill=tk.BOTH, expand=True)
+        tk.Label(self.panel, text="查询结果", font=("Microsoft YaHei", 9, "bold"),
+                 fg="#64748B", bg="#FFFFFF").pack(anchor=tk.W, padx=16, pady=(0, 4))
         self.result_text = tk.Text(
-            self.result_frame, height=14, wrap=tk.WORD,
-            font=("Microsoft YaHei", 10), state=tk.DISABLED,
-            bg="#FFFFFF", relief=tk.SOLID, borderwidth=1
+            self.panel, height=12, wrap=tk.WORD,
+            font=("Microsoft YaHei", 9), state=tk.DISABLED,
+            bg="#F8F9FB", fg="#334155",
+            relief=tk.FLAT, borderwidth=1, highlightbackground="#E5E7EB",
+            padx=10, pady=8
         )
-        self.result_text.pack(fill=tk.BOTH, expand=True)
-
-        # 图例
-        ttk.Label(
-            self.panel,
-            text="● 普通节点  ● 路径高亮  — 最短路径",
-            font=("Microsoft YaHei", 8), foreground="#7F8C8D"
-        ).pack(pady=(8, 0))
+        self.result_text.pack(fill=tk.BOTH, expand=True, padx=16, pady=(0, 12))
 
     # ---------- 地图加载 ----------
     def _load_map(self, map_file: str):
@@ -399,9 +451,11 @@ class CampusNavigationApp:
         self._draw_map()
 
     def _auto_layout(self):
+        """无坐标时自动圆形布局（基于参考画布尺寸）。"""
         n = self.campus.node_count
-        cx, cy = 320, 290
-        r = 200
+        cx = self._ref_cw // 2
+        cy = self._ref_ch // 2
+        r = min(self._ref_cw, self._ref_ch) // 3
         self.campus.coords = []
         for i in range(n):
             angle = 2 * math.pi * i / n - math.pi / 2
@@ -409,9 +463,33 @@ class CampusNavigationApp:
             y = int(cy + r * math.sin(angle))
             self.campus.coords.append((x, y))
 
+    def _get_scaled_coords(self) -> list[tuple[int, int]]:
+        """将参考坐标缩放至当前画布尺寸。"""
+        cw = self.canvas.winfo_width()
+        ch = self.canvas.winfo_height()
+        if cw < 50:
+            cw, ch = self._ref_cw, self._ref_ch
+        sx = cw / self._ref_cw
+        sy = ch / self._ref_ch
+        return [(int(x * sx), int(y * sy)) for x, y in self.campus.coords]
+
+    def _on_canvas_resize(self, event):
+        """画布尺寸变化时重绘。"""
+        self._draw_map()
+
     # ---------- 地图绘制 ----------
     def _draw_map(self):
         self.canvas.delete("all")
+        scaled = self._get_scaled_coords()
+
+        # 背景网格（淡化）
+        cw = self.canvas.winfo_width()
+        ch = self.canvas.winfo_height()
+        if cw > 50:
+            for gx in range(40, cw, 40):
+                self.canvas.create_line(gx, 0, gx, ch, fill="#EEF0F4", width=1)
+            for gy in range(40, ch, 40):
+                self.canvas.create_line(0, gy, cw, gy, fill="#EEF0F4", width=1)
 
         # 边（去重）
         drawn_edges = set()
@@ -422,48 +500,83 @@ class CampusNavigationApp:
                 if pair in drawn_edges:
                     continue
                 drawn_edges.add(pair)
-                w_walk = edge[1]
-                w_bike = edge[2]
-                self._draw_edge(u, v, w_walk, w_bike, highlight=False)
+                self._draw_edge(u, v, edge[1], edge[2], scaled, highlight=False)
 
         # 节点
         for i, name in enumerate(self.campus.nodes):
-            self._draw_node(i, name, highlight=False)
+            self._draw_node(i, name, scaled, highlight=False)
 
         if self.current_path:
-            self._highlight_path()
+            self._highlight_path(scaled)
 
-    def _draw_node(self, idx: int, name: str, highlight: bool):
-        x, y = self.campus.coords[idx]
-        r = self.NODE_RADIUS
+    def _draw_node(self, idx: int, name: str, scaled: list[tuple[int, int]],
+                   highlight: bool):
+        """绘制圆角矩形节点（含阴影 + 编号徽章）。"""
+        x, y = scaled[idx]
+        w, h = self.NODE_W, self.NODE_H
+        r = self.NODE_R
+
+        # 阴影
+        _round_rect(self.canvas, x - w // 2 + 2, y - h // 2 + 2,
+                    x + w // 2 + 2, y + h // 2 + 2, r,
+                    fill=self.NODE_SHADOW, outline="", tags="node")
+
+        # 主体
         color = self.NODE_HIGHLIGHT if highlight else self.NODE_COLOR
-        self.canvas.create_oval(x - r, y - r, x + r, y + r,
-                                fill=color, outline="", tags="node")
-        self.canvas.create_text(x, y, text=name, fill="white",
-                                font=("Microsoft YaHei", 9, "bold"), tags="node")
+        _round_rect(self.canvas, x - w // 2, y - h // 2,
+                    x + w // 2, y + h // 2, r,
+                    fill=color, outline="", tags="node")
 
-    def _draw_edge(self, u: int, v: int, w_walk: int, w_bike: int, highlight: bool):
-        x1, y1 = self.campus.coords[u]
-        x2, y2 = self.campus.coords[v]
+        # 编号徽章
+        badge_r = 9
+        badge_x = x - w // 2 + 12
+        badge_y = y - h // 2 + 12
+        self.canvas.create_oval(
+            badge_x - badge_r, badge_y - badge_r,
+            badge_x + badge_r, badge_y + badge_r,
+            fill="#FFFFFF", outline="", tags="node"
+        )
+        self.canvas.create_text(
+            badge_x, badge_y, text=str(idx + 1),
+            fill=color, font=("Segoe UI", 7, "bold"), tags="node"
+        )
+
+        # 地点名称
+        self.canvas.create_text(
+            x, y, text=name, fill="#FFFFFF",
+            font=("Microsoft YaHei", 10, "bold"), tags="node"
+        )
+
+    def _draw_edge(self, u: int, v: int, w_walk: int, w_bike: int,
+                   scaled: list[tuple[int, int]], highlight: bool):
+        """绘制边及权重标签。"""
+        x1, y1 = scaled[u]
+        x2, y2 = scaled[v]
         color = self.EDGE_HIGHLIGHT if highlight else self.EDGE_COLOR
         width = self.EDGE_HIGHLIGHT_WIDTH if highlight else self.EDGE_WIDTH
-        self.canvas.create_line(x1, y1, x2, y2, fill=color, width=width, tags="edge")
+        self.canvas.create_line(x1, y1, x2, y2, fill=color, width=width,
+                                capstyle=tk.ROUND, tags="edge")
 
-        # 显示当前模式对应的权重，多模式时标注单位
+        # 权重标签（白底胶囊）
         if w_walk == w_bike:
             label = str(w_walk)
         else:
             active_w = w_walk if self.current_mode == 0 else w_bike
-            unit = "分" if self.current_mode == 0 else "分"
-            label = f"{active_w}{unit}"
-        mx, my = (x1 + x2) // 2, (y1 + y2) // 2 - 8
+            label = f"{active_w}分"
+        mx, my = (x1 + x2) // 2, (y1 + y2) // 2
+        # 胶囊背景
+        pad_x, pad_y = 14, 8
+        self.canvas.create_oval(
+            mx - pad_x, my - pad_y, mx + pad_x, my + pad_y,
+            fill="#FFFFFF", outline="#E5E7EB", tags="edge"
+        )
         self.canvas.create_text(
             mx, my, text=label,
-            fill="#2C3E50", font=("Microsoft YaHei", 8),
-            tags="edge"
+            fill="#64748B", font=("Segoe UI", 8, "bold"), tags="edge"
         )
 
-    def _highlight_path(self):
+    def _highlight_path(self, scaled: list[tuple[int, int]]):
+        """高亮最短路径。"""
         if not self.current_path or len(self.current_path) < 2:
             return
         path_idx = [self.campus.name_to_idx[n] for n in self.current_path]
@@ -475,10 +588,10 @@ class CampusNavigationApp:
                 drawn.add(pair)
                 for edge in self.campus.adj[u]:
                     if edge[0] == v:
-                        self._draw_edge(u, v, edge[1], edge[2], highlight=True)
+                        self._draw_edge(u, v, edge[1], edge[2], scaled, highlight=True)
                         break
         for idx in path_idx:
-            self._draw_node(idx, self.campus.nodes[idx], highlight=True)
+            self._draw_node(idx, self.campus.nodes[idx], scaled, highlight=True)
 
     # ---------- 模式切换 ----------
     def _on_mode_changed(self):
