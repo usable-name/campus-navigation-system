@@ -267,7 +267,7 @@ def _round_rect(canvas: tk.Canvas, x1: int, y1: int, x2: int, y2: int,
                 **kwargs) -> int:
     """使用精确 PWQ 圆弧绘制圆角矩形（填充+描边）。返回最后一个 item ID。"""
     items = []
-    # 填充：四角扇区 + 中央矩形 + 上下带状矩形
+    # 填充：四角扇区 + 中央矩形 + 上下带状矩形（重叠 1px 防间隙）
     if fill:
         for cx, cy, start in [(x1 + r, y1 + r, 90), (x2 - r, y1 + r, 0),
                                (x2 - r, y2 - r, 270), (x1 + r, y2 - r, 180)]:
@@ -275,10 +275,10 @@ def _round_rect(canvas: tk.Canvas, x1: int, y1: int, x2: int, y2: int,
                                            start=start, extent=90,
                                            style=tk.PIESLICE, fill=fill,
                                            outline=fill, width=0, **kwargs))
-        items.append(canvas.create_rectangle(x1 + r, y1, x2 - r, y2,
+        items.append(canvas.create_rectangle(x1 + r - 1, y1, x2 - r + 1, y2,
                                               fill=fill, outline=fill,
                                               width=0, **kwargs))
-        items.append(canvas.create_rectangle(x1, y1 + r, x2, y2 - r,
+        items.append(canvas.create_rectangle(x1, y1 + r - 1, x2, y2 - r + 1,
                                               fill=fill, outline=fill,
                                               width=0, **kwargs))
     # 描边：四角弧线 + 四条直线
@@ -746,14 +746,6 @@ class CampusNavigationApp:
                 x + w // 2 + 6, y + h // 2 + 6,
                 outline="#EF4444", width=3, tags="node"
             )
-
-        # === 双层阴影（模拟柔和阴影） ===
-        _round_rect(self.canvas, x - w // 2 + 3, y - h // 2 + 3,
-                    x + w // 2 + 3, y + h // 2 + 3, r,
-                    fill="#CBD5E1", outline="", tags="node")
-        _round_rect(self.canvas, x - w // 2 + 1, y - h // 2 + 1,
-                    x + w // 2 + 1, y + h // 2 + 1, r,
-                    fill="#E2E8F0", outline="", tags="node")
 
         # === 主体颜色 ===
         if broken:
