@@ -315,6 +315,7 @@ class CampusNavigationApp:
         self._ref_ch = 750   # 参考画布高度
         self._select_start: int | None = None  # 点击选中的起点
         self._select_end: int | None = None    # 点击选中的终点
+        self._broken_nodes: set[int] = set()   # 不可达节点（红色标记）
 
         # 主布局
         self.main_frame = ttk.Frame(root)
@@ -400,7 +401,12 @@ class CampusNavigationApp:
             self.panel, textvariable=self.end_var, state="readonly",
             font=("Microsoft YaHei", 10)
         )
-        self.end_combo.pack(fill=tk.X, padx=16, pady=(0, 14))
+        self.end_combo.pack(fill=tk.X, padx=16, pady=(0, 4))
+        self.connect_warn = tk.Label(self.panel, text="", font=("Microsoft YaHei", 8),
+                                      fg="#EF4444", bg="#FFFFFF")
+        self.connect_warn.pack(anchor=tk.W, padx=16, pady=(0, 10))
+        self.start_combo.bind("<<ComboboxSelected>>", self._on_combo_changed)
+        self.end_combo.bind("<<ComboboxSelected>>", self._on_combo_changed)
 
         # 按钮组
         btn_frame = tk.Frame(self.panel, bg="#FFFFFF")
@@ -439,7 +445,15 @@ class CampusNavigationApp:
             relief=tk.FLAT, borderwidth=1, highlightbackground="#E5E7EB",
             padx=10, pady=8
         )
-        self.result_text.pack(fill=tk.BOTH, expand=True, padx=16, pady=(0, 12))
+        self.result_text.pack(fill=tk.BOTH, expand=True, padx=16, pady=(0, 8))
+        # 结果区重置按钮
+        self.result_reset_btn = tk.Button(
+            self.panel, text="重置路径", command=self._reset_selection,
+            font=("Microsoft YaHei", 9), fg="#4F6EF7", bg="#EFF1FF",
+            activebackground="#DEE2FF", activeforeground="#4F6EF7",
+            relief=tk.FLAT, cursor="hand2", padx=12, pady=4, borderwidth=0
+        )
+        self.result_reset_btn.pack(fill=tk.X, padx=16, pady=(0, 12))
 
     # ---------- 地图加载 ----------
     def _load_map(self, map_file: str):
@@ -477,6 +491,41 @@ class CampusNavigationApp:
             y = int(cy + r * math.sin(angle))
             self.campus.coords.append((x, y))
 
+    def _bfs_reachable(self, start_idx: int) -> set[int]:
+        """BFS 返回从 start_idx 可达的所有节点索引集合。"""
+        visited = {start_idx}
+        q = [start_idx]
+        while q:
+            u = q.pop(0)
+            for edge in self.campus.adj[u]:
+                v = edge[0]
+                if v not in visited:
+                    visited.add(v)
+                    q.append(v)
+        return visited
+
+    def _check_connectivity(self):
+        """检查起点→终点连通性，更新 UI 状态。"""
+        start = self.start_var.get().strip()
+        end = self.end_var.get().strip()
+        if not start or not end:
+            self.connect_warn.config(text="")
+            self.search_btn.config(state=tk.NORMAL, bg="#4F6EF7")
+            return
+        s = self.campus.name_to_idx.get(start)
+        t = self.campus.name_to_idx.get(end)
+        if s is None or t is None:
+            return
+        reachable = self._bfs_reachable(s)
+        if t not in reachable:
+            self.connect_warn.config(text="⚠ 无路径连接", fg="#EF4444")
+            self.search_btn.config(state=tk.DISABLED, bg="#CBD5E1")
+        else:
+            self.connect_warn.config(text="✓ 路径可达", fg="#10B981")
+            self.search_btn.config(state=tk.NORMAL, bg="#4F6EF7")
+        # 记录断点用于可视化
+        self._broken_nodes = set(range(self.campus.node_count)) - reachable
+
     def _get_scaled_coords(self) -> list[tuple[int, int]]:
         """将参考坐标缩放至当前画布尺寸。"""
         cw = self.canvas.winfo_width()
@@ -510,6 +559,8 @@ class CampusNavigationApp:
                     self._select_end = None
                     self.start_var.set(self.campus.nodes[i])
                     self.end_var.set("")
+                self._check_connectivity()
+                self.current_path = None
                 self._draw_map()
                 return
 
@@ -517,8 +568,23 @@ class CampusNavigationApp:
         """重置点击选点。"""
         self._select_start = None
         self._select_end = None
+        self._broken_nodes = set()
         self.start_var.set("")
         self.end_var.set("")
+        self.connect_warn.config(text="")
+        self.search_btn.config(state=tk.NORMAL, bg="#4F6EF7")
+        self.current_path = None
+        self._draw_map()
+        self._set_result("")
+
+    def _on_combo_changed(self, event=None):
+        """下拉框选择改变时同步状态。"""
+        start = self.start_var.get().strip()
+        end = self.end_var.get().strip()
+        self._select_start = self.campus.name_to_idx.get(start)
+        self._select_end = self.campus.name_to_idx.get(end)
+        self._check_connectivity()
+        self.current_path = None
         self._draw_map()
 
     # ---------- 地图绘制 ----------
@@ -549,14 +615,15 @@ class CampusNavigationApp:
         # 节点
         for i, name in enumerate(self.campus.nodes):
             is_sel = i in (self._select_start, self._select_end)
-            self._draw_node(i, name, scaled, highlight=False, selected=is_sel)
+            is_broken = i in self._broken_nodes and self._select_start is not None
+            self._draw_node(i, name, scaled, highlight=False, selected=is_sel, broken=is_broken)
 
         if self.current_path:
             self._highlight_path(scaled)
 
     def _draw_node(self, idx: int, name: str, scaled: list[tuple[int, int]],
-                   highlight: bool, selected: bool = False):
-        """绘制圆角矩形节点（含阴影 + 编号徽章 + 选中光环）。"""
+                   highlight: bool, selected: bool = False, broken: bool = False):
+        """绘制圆角矩形节点（含阴影 + 编号徽章 + 选中光环 + 断点标记）。"""
         x, y = scaled[idx]
         w, h = self.NODE_W, self.NODE_H
         r = self.NODE_R
@@ -567,15 +634,40 @@ class CampusNavigationApp:
                     fill=self.NODE_SHADOW, outline="", tags="node")
 
         # 主体
-        if highlight:
+        if broken:
+            color = "#FEE2E2"  # 浅红底
+            text_color = "#991B1B"
+        elif highlight:
             color = self.NODE_HIGHLIGHT
+            text_color = "#FFFFFF"
         elif selected:
             color = self.NODE_SELECTED
+            text_color = "#FFFFFF"
         else:
             color = self.NODE_COLOR
+            text_color = "#FFFFFF"
+
         _round_rect(self.canvas, x - w // 2, y - h // 2,
                     x + w // 2, y + h // 2, r,
                     fill=color, outline="", tags="node")
+
+        # 断点红色边框
+        if broken:
+            _round_rect(self.canvas, x - w // 2, y - h // 2,
+                        x + w // 2, y + h // 2, r,
+                        fill="", outline="#EF4444", width=2, tags="node")
+            # 感叹号图标
+            self.canvas.create_oval(
+                x + w // 2 - 12, y - h // 2 - 4,
+                x + w // 2 + 4, y - h // 2 + 12,
+                fill="#EF4444", outline="", tags="node"
+            )
+            self.canvas.create_text(
+                x + w // 2 - 4, y - h // 2 + 4,
+                text="!", fill="#FFFFFF",
+                font=("Segoe UI", 8, "bold"), tags="node"
+            )
+            badge_fill = "#EF4444"
 
         # 选中光环
         if selected:
@@ -589,19 +681,21 @@ class CampusNavigationApp:
         badge_r = 10
         badge_x = x - w // 2 + 14
         badge_y = y - h // 2 + 14
+        badge_fill = "#EF4444" if broken else "#FFFFFF"
+        badge_text_color = "#FFFFFF" if broken else color
         self.canvas.create_oval(
             badge_x - badge_r, badge_y - badge_r,
             badge_x + badge_r, badge_y + badge_r,
-            fill="#FFFFFF", outline="", tags="node"
+            fill=badge_fill, outline="", tags="node"
         )
         self.canvas.create_text(
             badge_x, badge_y, text=str(idx + 1),
-            fill=color, font=("Segoe UI", 8, "bold"), tags="node"
+            fill=badge_text_color, font=("Segoe UI", 8, "bold"), tags="node"
         )
 
         # 地点名称
         self.canvas.create_text(
-            x, y, text=name, fill="#FFFFFF",
+            x, y, text=name, fill=text_color,
             font=("Microsoft YaHei", 10, "bold"), tags="node"
         )
 
@@ -615,7 +709,7 @@ class CampusNavigationApp:
         self.canvas.create_line(x1, y1, x2, y2, fill=color, width=width,
                                 capstyle=tk.ROUND, tags="edge")
 
-        # 权重标签（白底胶囊）
+        # 权重标签（白底胶囊 + 橙色大字）
         if w_walk == w_bike:
             label = str(w_walk)
         else:
@@ -623,14 +717,14 @@ class CampusNavigationApp:
             label = f"{active_w}分"
         mx, my = (x1 + x2) // 2, (y1 + y2) // 2
         # 胶囊背景
-        pad_x, pad_y = 14, 8
+        pad_x, pad_y = 16, 10
         self.canvas.create_oval(
             mx - pad_x, my - pad_y, mx + pad_x, my + pad_y,
             fill="#FFFFFF", outline="#E5E7EB", tags="edge"
         )
         self.canvas.create_text(
             mx, my, text=label,
-            fill="#64748B", font=("Segoe UI", 8, "bold"), tags="edge"
+            fill="#FF6B00", font=("Segoe UI", 11, "bold"), tags="edge"
         )
 
     def _highlight_path(self, scaled: list[tuple[int, int]]):
@@ -655,6 +749,9 @@ class CampusNavigationApp:
     def _on_mode_changed(self):
         self.current_mode = self.mode_var.get()
         self.current_path = None
+        self._broken_nodes = set()
+        self.connect_warn.config(text="")
+        self.search_btn.config(state=tk.NORMAL, bg="#4F6EF7")
         self._draw_map()
         self._set_result("")
 
@@ -708,6 +805,12 @@ class CampusNavigationApp:
 
         if d_err:
             self.current_path = None
+            # 填充断点节点用于可视化
+            s_idx = self.campus.name_to_idx.get(start)
+            if s_idx is not None:
+                reachable = self._bfs_reachable(s_idx)
+                self._broken_nodes = set(range(self.campus.node_count)) - reachable
+            self._check_connectivity()
             self._draw_map()
             self._set_result(d_err, is_error=True)
             return
