@@ -280,11 +280,12 @@ class CampusNavigationApp:
     """校园导航系统主窗口。"""
 
     # 节点样式
-    NODE_W = 116          # 圆角矩形宽度（适配长中文名）
-    NODE_H = 44          # 圆角矩形高度
+    NODE_W = 108          # 圆角矩形宽度
+    NODE_H = 42          # 圆角矩形高度
     NODE_R = 14          # 圆角半径
     NODE_COLOR = "#4F6EF7"       # 靛蓝
-    NODE_HIGHLIGHT = "#FF6B6B"   # 珊瑚红
+    NODE_HIGHLIGHT = "#FF6B6B"   # 珊瑚红（路径）
+    NODE_SELECTED = "#10B981"    # 翠绿（选中起点/终点）
     NODE_SHADOW = "#D1D5DB"      # 阴影
 
     # 边样式
@@ -303,15 +304,17 @@ class CampusNavigationApp:
     def __init__(self, root: tk.Tk, map_file: str):
         self.root = root
         self.root.title("校园导航系统")
-        self.root.geometry("1280x760")
-        self.root.minsize(960, 580)
+        self.root.geometry("1380x800")
+        self.root.minsize(1020, 620)
         self.root.configure(bg="#FFFFFF")
 
         self.campus = CampusMap()
         self.current_path: list[str] | None = None
         self.current_mode = 0
-        self._ref_cw = 900   # 参考画布宽度（坐标基于此）
-        self._ref_ch = 650   # 参考画布高度
+        self._ref_cw = 1050  # 参考画布宽度
+        self._ref_ch = 750   # 参考画布高度
+        self._select_start: int | None = None  # 点击选中的起点
+        self._select_end: int | None = None    # 点击选中的终点
 
         # 主布局
         self.main_frame = ttk.Frame(root)
@@ -324,6 +327,7 @@ class CampusNavigationApp:
         )
         self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 12))
         self.canvas.bind("<Configure>", self._on_canvas_resize)
+        self.canvas.bind("<Button-1>", self._on_canvas_click)
 
         # 右侧 — 控制面板
         self.panel = tk.Frame(self.main_frame, bg="#FFFFFF", width=280)
@@ -362,6 +366,11 @@ class CampusNavigationApp:
                 activebackground="#FFFFFF", activeforeground="#4F6EF7",
                 selectcolor="#FFFFFF", indicatoron=True
             ).pack(side=tk.LEFT, padx=(0, 16))
+
+        # 点击选点提示
+        tk.Label(self.panel, text="💡 点击地图节点选择起终点",
+                 font=("Microsoft YaHei", 8), fg="#94A3B8", bg="#FFFFFF"
+                 ).pack(anchor=tk.W, padx=16, pady=(0, 8))
 
         # 起点
         tk.Label(self.panel, text="起点", font=("Microsoft YaHei", 9, "bold"),
@@ -409,9 +418,14 @@ class CampusNavigationApp:
             activebackground="#DEE2FF", activeforeground="#4F6EF7",
             relief=tk.FLAT, cursor="hand2", padx=12, pady=4, borderwidth=0
         )
-        self.list_btn.pack(fill=tk.X)
-
-        # 分隔线
+        self.list_btn.pack(fill=tk.X, pady=(0, 6))
+        self.reset_btn = tk.Button(
+            btn_frame, text="重置选择", command=self._reset_selection,
+            font=("Microsoft YaHei", 8), fg="#94A3B8", bg="#F1F5F9",
+            activebackground="#E2E8F0", activeforeground="#64748B",
+            relief=tk.FLAT, cursor="hand2", padx=12, pady=3, borderwidth=0
+        )
+        self.reset_btn.pack(fill=tk.X)
         sep2 = tk.Frame(self.panel, height=1, bg="#E5E7EB")
         sep2.pack(fill=tk.X, padx=16, pady=(0, 12))
 
@@ -477,6 +491,36 @@ class CampusNavigationApp:
         """画布尺寸变化时重绘。"""
         self._draw_map()
 
+    def _on_canvas_click(self, event):
+        """点击画布选起点/终点。"""
+        scaled = self._get_scaled_coords()
+        # 查找被点击的节点
+        for i, (x, y) in enumerate(scaled):
+            hw, hh = self.NODE_W // 2, self.NODE_H // 2
+            if x - hw <= event.x <= x + hw and y - hh <= event.y <= y + hh:
+                if self._select_start is None:
+                    self._select_start = i
+                    self.start_var.set(self.campus.nodes[i])
+                elif self._select_end is None and i != self._select_start:
+                    self._select_end = i
+                    self.end_var.set(self.campus.nodes[i])
+                else:
+                    # 重置：新点击作为起点
+                    self._select_start = i
+                    self._select_end = None
+                    self.start_var.set(self.campus.nodes[i])
+                    self.end_var.set("")
+                self._draw_map()
+                return
+
+    def _reset_selection(self):
+        """重置点击选点。"""
+        self._select_start = None
+        self._select_end = None
+        self.start_var.set("")
+        self.end_var.set("")
+        self._draw_map()
+
     # ---------- 地图绘制 ----------
     def _draw_map(self):
         self.canvas.delete("all")
@@ -504,14 +548,15 @@ class CampusNavigationApp:
 
         # 节点
         for i, name in enumerate(self.campus.nodes):
-            self._draw_node(i, name, scaled, highlight=False)
+            is_sel = i in (self._select_start, self._select_end)
+            self._draw_node(i, name, scaled, highlight=False, selected=is_sel)
 
         if self.current_path:
             self._highlight_path(scaled)
 
     def _draw_node(self, idx: int, name: str, scaled: list[tuple[int, int]],
-                   highlight: bool):
-        """绘制圆角矩形节点（含阴影 + 编号徽章）。"""
+                   highlight: bool, selected: bool = False):
+        """绘制圆角矩形节点（含阴影 + 编号徽章 + 选中光环）。"""
         x, y = scaled[idx]
         w, h = self.NODE_W, self.NODE_H
         r = self.NODE_R
@@ -522,10 +567,23 @@ class CampusNavigationApp:
                     fill=self.NODE_SHADOW, outline="", tags="node")
 
         # 主体
-        color = self.NODE_HIGHLIGHT if highlight else self.NODE_COLOR
+        if highlight:
+            color = self.NODE_HIGHLIGHT
+        elif selected:
+            color = self.NODE_SELECTED
+        else:
+            color = self.NODE_COLOR
         _round_rect(self.canvas, x - w // 2, y - h // 2,
                     x + w // 2, y + h // 2, r,
                     fill=color, outline="", tags="node")
+
+        # 选中光环
+        if selected:
+            self.canvas.create_oval(
+                x - w // 2 - 4, y - h // 2 - 4,
+                x + w // 2 + 4, y + h // 2 + 4,
+                outline="#10B981", width=3, tags="node"
+            )
 
         # 编号徽章
         badge_r = 10
@@ -591,7 +649,7 @@ class CampusNavigationApp:
                         self._draw_edge(u, v, edge[1], edge[2], scaled, highlight=True)
                         break
         for idx in path_idx:
-            self._draw_node(idx, self.campus.nodes[idx], scaled, highlight=True)
+            self._draw_node(idx, self.campus.nodes[idx], scaled, highlight=True, selected=False)
 
     # ---------- 模式切换 ----------
     def _on_mode_changed(self):
