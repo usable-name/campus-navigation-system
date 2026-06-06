@@ -265,40 +265,30 @@ def route_with_waypoint(campus: CampusMap, start: str, waypoint: str, end: str,
 def _round_rect(canvas: tk.Canvas, x1: int, y1: int, x2: int, y2: int,
                 r: int, fill: str = "", outline: str = "", width: int = 0,
                 **kwargs) -> int:
-    """使用精确 PWQ 圆弧绘制圆角矩形（填充+描边）。返回最后一个 item ID。"""
-    items = []
-    # 填充：四角扇区 + 中央矩形 + 上下带状矩形（重叠 1px 防间隙）
+    """高密度多边形近似圆角矩形（10点/角，优于 Tkinter arc 的锯齿）。"""
+    steps = 10  # 每 90° 采样点数
+    pts = []
+
+    def _arc(cx, cy, start_rad):
+        for i in range(steps + 1):
+            a = start_rad + (math.pi / 2) * i / steps
+            pts.append(cx + r * math.cos(a))
+            pts.append(cy + r * math.sin(a))
+
+    # 四角：左上(π→3π/2) → 右上(3π/2→2π) → 右下(0→π/2) → 左下(π/2→π)
+    _arc(x1 + r, y1 + r, math.pi)          # 左上
+    _arc(x2 - r, y1 + r, 3 * math.pi / 2)  # 右上
+    _arc(x2 - r, y2 - r, 0)                # 右下
+    _arc(x1 + r, y2 - r, math.pi / 2)      # 左下
+
+    last_id = 0
     if fill:
-        for cx, cy, start in [(x1 + r, y1 + r, 90), (x2 - r, y1 + r, 0),
-                               (x2 - r, y2 - r, 270), (x1 + r, y2 - r, 180)]:
-            items.append(canvas.create_arc(cx - r, cy - r, cx + r, cy + r,
-                                           start=start, extent=90,
-                                           style=tk.PIESLICE, fill=fill,
-                                           outline=fill, width=0, **kwargs))
-        items.append(canvas.create_rectangle(x1 + r - 1, y1, x2 - r + 1, y2,
-                                              fill=fill, outline=fill,
-                                              width=0, **kwargs))
-        items.append(canvas.create_rectangle(x1, y1 + r - 1, x2, y2 - r + 1,
-                                              fill=fill, outline=fill,
-                                              width=0, **kwargs))
-    # 描边：四角弧线 + 四条直线
+        last_id = canvas.create_polygon(pts, fill=fill, outline=fill,
+                                         width=0, smooth=False, **kwargs)
     if outline and width:
-        w = width
-        for cx, cy, start in [(x1 + r, y1 + r, 90), (x2 - r, y1 + r, 0),
-                               (x2 - r, y2 - r, 270), (x1 + r, y2 - r, 180)]:
-            items.append(canvas.create_arc(cx - r, cy - r, cx + r, cy + r,
-                                           start=start, extent=90,
-                                           style=tk.ARC, outline=outline,
-                                           width=w, **kwargs))
-        items.append(canvas.create_line(x1 + r, y1, x2 - r, y1,
-                                         fill=outline, width=w, **kwargs))
-        items.append(canvas.create_line(x1 + r, y2, x2 - r, y2,
-                                         fill=outline, width=w, **kwargs))
-        items.append(canvas.create_line(x1, y1 + r, x1, y2 - r,
-                                         fill=outline, width=w, **kwargs))
-        items.append(canvas.create_line(x2, y1 + r, x2, y2 - r,
-                                         fill=outline, width=w, **kwargs))
-    return items[-1] if items else 0
+        last_id = canvas.create_polygon(pts, fill="", outline=outline,
+                                         width=width, smooth=False, **kwargs)
+    return last_id
 
 
 class CampusNavigationApp:
